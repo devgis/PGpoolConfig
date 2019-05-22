@@ -1,0 +1,223 @@
+PGPool集群的搭建和测试
+2015-06-05 19:20 1294人阅读 评论(0) 收藏 举报
+ 分类： Postgres（2）  
+版权声明：本文为博主原创文章，未经博主允许不得转载。
+
+PGPool集群的搭建和测试
+
+
+[html] view plain copy print?
+CentOS6.5 192.168.0.101   cnode1 //pgpool1，datanode1  
+CentOS6.5 192.168.0.102   cnode1 //pgpool2，datanode2  
+CentOS6.5 192.168.0.103   cnode1 //datanode3  
+
+
+
+一、主机规划 
+[html] view plain copy print?
+cnode1 (pgpool1，datanode1)  
+cnode2 (pgpool2，datanode2)  
+cnode3 (datanode3)   
+
+
+二、在每个节点配置主机Host 
+#vim /etc/hosts 
+[html] view plain copy print?
+192.168.0.101 cnode1  
+192.168.0.102 cnode2  
+192.168.0.103 cnode3   
+
+
+
+三、安装Postgres和PGPool
+1. 在每一个节点上安装依赖包 
+# yum install -y flex bison readline-devel zlib-devel openjade docbook-style-dsssl 
+
+2. 在每一个节点上安装Postgres
+[html] view plain copy print?
+tar -xf linux-postgresql-9.4.1.tar.bz2  
+cd postgresql-9.4.1  
+./configure --prefix=/usr/local/pgsql  
+make  
+make install  
+
+
+3. 在每一个节点上安装PGPool
+[html] view plain copy print?
+tar -xf pgpool-II-3.4.2.tar.gz  
+sudo apt-get install libpq-dev
+cd pgpool-II-3.4.2  
+./configure --prefix=/usr/local/pgpool  
+make  
+make install  
+
+
+
+四、配置环境变量
+
+(1). 创建postgres用户
+#adduser postgres
+修改postgres密码
+#passwd postgres
+
+(2).设置postgres用户的环境变量
+切换到postgres用户
+#su - postgres
+进入postgres的主目录
+#cd ~
+
+编辑~/.bash_profile文件
+#vi ~/.bash_profile
+[html] view plain copy print?
+cnode1、cnode2节点加入以下的环境变量：  
+export PATH  
+export PATH=/usr/local/pgsql/bin:/usr/local/pgpool/bin：$PATH  
+export PGDATA=/usr/local/pgsql/data  
+export MANPATH=$MANPATH:/usr/local/pgsql/man  
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/pgsql/lib  
+
+
+在cnode3节点加入以下的环境变量：
+[html] view plain copy print?
+export PATH  
+export PATH=/usr/local/pgsql/bin:$PATH  
+export PGDATA=/usr/local/pgsql/data  
+export MANPATH=$MANPATH:/usr/local/pgsql/man  
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/pgsql/lib  
+
+
+
+(3). 在datanode1、datanode2和datanode3中将Postgres添加到service
+[html] view plain copy print?
+cp /opt/postgresql-9.4.1/contrib/start-scripts/linux /etc/init.d/postgresql  
+ckcfg --add postgresql  
+
+
+
+保存，退出vi。执行以下命令，使环境变量生效
+#source ~/.bash_profile
+
+五、配置pgpool集群
+
+1. 配置pgpool1和pgpool2节点的/etc/pgpool2/pgpool.conf
+*修改pgpool1和pgpool2节点pgpool.conf，启用复制模式
+replication_mode = false
+load_balance_mode = false
+修改为:
+replication_mode = true
+load_balance_mode = true
+
+2. pgpool1节点pgpool.conf文件里面添加如下内容：
+[html] view plain copy print?
+backend_hostname1 = 'cnode2'  
+backend_port1 = 5432  
+backend_weight1 = 1  
+backend_data_directory1 = '/data1'  
+backend_flag1 = 'ALLOW_TO_FAILOVER'  
+  
+backend_hostname2 = 'cnode3'  
+backend_port2 = 5432  
+backend_weight2 = 1  
+backend_data_directory2 = '/data2'  
+backend_flag2 = 'ALLOW_TO_FAILOVER'  
+
+
+
+3. pgpool2节点pgpool.conf文件里面添加如下内容：
+[html] view plain copy print?
+backend_hostname1 = 'cnode1'  
+backend_port1 = 5432  
+backend_weight1 = 1  
+backend_data_directory1 = '/data1'  
+backend_flag1 = 'ALLOW_TO_FAILOVER'  
+  
+backend_hostname2 = 'cnode3'  
+backend_port2 = 5432  
+backend_weight2 = 1  
+backend_data_directory2 = '/data2'  
+backend_flag2 = 'ALLOW_TO_FAILOVER'  
+
+4. 配置WATCHDOG
+(1)配置pgpool1的watchdog
+[html] view plain copy print?
+# - Enabling -  
+use_watchdog = on  
+  
+# Host name or IP address of this watchdog  
+# (change requires restart)  
+wd_hostname = 'cnode1'                                   
+wd_port = 9000  
+
+
+# - Virtual IP control Setting -
+# 在启动集群的时候，2个pgpool中被选举为master的节点占有该节点，如果
+# 发生故障转移，master节点挂机了，standby节点会占有这个IP并继续提供服务
+[html] view plain copy print?
+delegate_IP = '192.168.0.105'  
+  
+# Host name or IP address of destination 0  
+# for sending heartbeat signal.  
+# (change requires restart)  
+heartbeat_destination0 = 'cnode2'  
+heartbeat_destination_port0 = 9694  
+  
+# - Other pgpool Connection Settings -  
+# Host name or IP address to connect to for other pgpool 0  
+# (change requires restart)  
+other_pgpool_hostname0 = 'cnode2'  
+  
+# Port number for othet pgpool 0  
+other_pgpool_port0 = 9999  
+                                      
+# (change requires restart)  
+other_wd_port0 = 9000  
+
+
+
+(2)配置pgpool2的watchdog
+[html] view plain copy print?
+# - Enabling -  
+use_watchdog = on  
+  
+# Host name or IP address of this watchdog  
+# (change requires restart)  
+wd_hostname = 'cnode2'                                   
+wd_port = 9000  
+  
+# - Virtual IP control Setting -  
+delegate_IP = '192.168.0.105'  
+  
+# Host name or IP address of destination 0  
+# for sending heartbeat signal.  
+# (change requires restart)  
+heartbeat_destination0 = 'cnode1'  
+heartbeat_destination_port0 = 9694  
+  
+# - Other pgpool Connection Settings -  
+# Host name or IP address to connect to for other pgpool 0  
+# (change requires restart)  
+other_pgpool_hostname0 = 'cnode1'  
+  
+# Port number for othet pgpool 0  
+other_pgpool_port0 = 9999  
+                                      
+# (change requires restart)  
+other_wd_port0 = 9000  
+
+
+
+六、启动集群
+1. 先启动3个数据节点datanode1，datanode2和datanode3
+service postgresql start
+
+2.启动2个pgpool:pgpool1、pgpool2
+pgpool -n &
+
+注：
+关闭连接池
+pgpool stop
+
+
+七. 测试集群
+访问pgpool1节点，在节点中创建数据库，再创建一个schema，在在schema中创建一个表，再在表中插入数据，所有这些数据
+都会同步到3个数据节点（datanode1、datanode2和datanode3）。

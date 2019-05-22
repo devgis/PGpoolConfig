@@ -1,0 +1,226 @@
+
+三台服务器ip分别为192.168.0.201/202/203
+其中主服务器201 并且pgPool也安装在201上面
+
+
+pgpool-ii的安装配置基于pgpool-ii的集群配置(三)：1.1 pgpool-ii集群中间件安装，注:集群代理程序和主数据库节点安装在一台机器上。
+
+su - root
+
+mkdir -p /opt/pgpool 创建pgpool安装目录
+
+cd /opt/soft_bak/
+
+上传 pgpool-II-3.3.12.tar.gz
+
+tar zxvf pgpool-II-3.3.12.tar.gz
+
+cd pgpool-II-3.3.12
+
+./configure -prefix=/opt/pgpool-with-pgsql=path -with-pgsql=/opt/pgsql932
+
+make
+
+make install
+
+以下操作分别在主节点和备节点同时执行:
+
+su - pg93
+
+cd /home/pg93/.ssh/
+
+rm -rf *
+
+配置两台数据库服务器之间的信任关系
+
+su - pg93
+
+ssh-keygen
+
+ssh-copy-id pg93@备节点IP 主节点执行
+
+ssh-copy-id pg93@主节点IP 备节点执行
+
+yes
+
+cuipeng
+
+chown pg93 /home/pg93/.ssh/
+
+chown pg93 /home/pg93/.ssh/*
+
+chmod 600 /home/pg93/.ssh/*
+
+chmod 700 /home/pg93/.ssh/
+
+ssh 授信IP地址 测试是否可以免密码登录
+
+ 
+
+ 
+
+配置pgpool-ii代理的归属权限
+
+su - root
+
+chown -R pg93:pg93 /opt/pgpool
+
+mkdir /var/run/pgpool
+
+cd /var/run/pgpool
+
+vi pgpool.pid 添加内容123456
+
+chown -R pg93:pg93 /var/run/pgpool
+
+ 
+
+复制pgpool代理,配置文件
+
+su - pg93
+
+cd /opt/pgpool/etc/
+
+cp pcp.conf.sample pcp.conf
+
+cp pgpool.conf.sample-stream pgpool.conf
+
+cp pool_hba.conf.sample pool_hba.conf
+
+ 
+
+编辑vi pool_hba.conf文件,添加如下内容：
+
+host all all 127.0.0.1/32 md5
+
+host all all 0.0.0.0/0 md5
+
+ 
+
+配置pgpool管理密码
+
+cd /opt/pgpool/bin
+
+pg_md5 cuipeng #复制md5值
+
+cd /opt/pgpool/etc
+
+vi pcp.conf
+
+postgres:4da80f53678a7a6e837c3e5cdd60477d (pg_md5cuipeng 生成的密码)
+
+ 
+
+登录主节点 执行
+
+psql -h 主数据库IP -p 主数据库端口 -U postgrespostgres
+
+create role srcheck nosuperuser loginencrypted password 'SRCHECK';
+
+digoal=# select rolname,rolpassword frompg_authid;
+
+rolname | rolpassword
+
+----------+-------------------------------------
+
+postgres | md53175bce1d3201d16594cebf9d7eb3f9d
+
+digoal | md5462f71c79368ccf422f8a773ef40074d
+
+srcheck | md5662c10f61b27a9ab38ce69157186b25f
+
+添加,pgpool连接数据库的用户和密码
+
+vi pool_passwd
+
+postgres:md59555230865286916a9015b1d070a74c7(从上一步查询中获取)
+
+ 
+
+配置pgpool主配置文件
+
+su - pg93
+
+cd /opt/pgpool/etc
+
+vi pgpool.conf
+
+listen_addresses = '*'
+
+port = 9999
+
+pcp_port = 9898
+
+backend_hostname0 = '主库ip'
+
+backend_port0 = 主库端口
+
+backend_weight0 = 1
+
+backend_data_directory0 = '/data'
+
+backend_flag0 = 'ALLOW_TO_FAILOVER'
+
+backend_hostname1 = '备库ip'
+
+backend_port1 = 备库端口
+
+backend_weight1 = 1
+
+backend_data_directory1 = '/data1'
+
+backend_flag1 = 'ALLOW_TO_FAILOVER'
+
+enable_pool_hba = on
+
+failover_command ='/opt/pgsql932/bin/failover_stream.sh %d %H /tmp/trigger_file'
+
+# 以下两个参数用于调试, 能看到sql balance的情况.
+
+log_statement = on
+
+log_per_node_statement = on
+
+sr_check_period = 2
+
+sr_check_user = 'srcheck'
+
+sr_check_password = 'SRCHECK'
+
+ 
+
+启动集群代理中间件
+
+cd /opt/pgpool/bin
+
+./pgpool -nd #启动pgpool
+
+./pgpool -m fast stop #关闭pgpool
+
+ps -ef |grep pgpool
+
+pg_controldata #查看数据库节点状态,在shell下执行
+
+ 
+
+登录集群
+
+su - pg93
+
+psql -h 127.0.0.1 -p 9999 -U postgrespostgres
+
+cuipeng 密码
+
+ 
+
+show pool_nodes; 登录集群中间件查看各节点状态
+
+status列解释
+
+0 - 该状态仅仅用于初始化，PCP从不显示它。
+
+1 - 节点已启动，还没有连接。
+
+2 - 节点已启动，连接被缓冲。
+
+3 - 节点已关闭。
